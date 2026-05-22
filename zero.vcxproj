@@ -92,6 +92,7 @@
     <ClCompile Include="zero\zones\devastation\FrogRaceBehavior.cpp" />
     <ClCompile Include="zero\zones\extremegames\BaseBehavior.cpp" />
     <ClCompile Include="zero\zones\hockey\GoalieBehavior.cpp" />
+    <ClCompile Include="zero\zones\clash\ClashZone.cpp" />
     <ClCompile Include="zero\zones\hockey\HockeyZone.cpp" />
     <ClCompile Include="zero\zones\hockey\OffenseBehavior.cpp" />
     <ClCompile Include="zero\zones\nexus\FoursBehavior.cpp" />
