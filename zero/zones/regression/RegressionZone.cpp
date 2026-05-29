@@ -239,7 +239,11 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     } else if (action == "decline") {
       Event::Dispatch(ChatQueueEvent::Public("?decline"));
     } else if (action == "forgive") {
-      Event::Dispatch(ChatQueueEvent::Public("?forgive"));
+      std::string cmd = arg.empty() ? "?forgive" : ("?forgive " + arg);
+      Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
+    } else if (action == "party") {
+      std::string cmd = arg.empty() ? "?party" : ("?party " + arg);
+      Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
     } else if (action == "say") {
       Event::Dispatch(ChatQueueEvent::Public(arg.data()));
     } else if (action == "requestship") {
@@ -272,6 +276,11 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
 
   void HandleEvent(const ChatEvent& event) override {
     if (!in_zone || !event.message) return;
+
+    // Party invite (independent of match lifecycle): "<inviter> invited you to a party. ..."
+    if (strstr(event.message, "invited you to a party")) {
+      Emit("invite", event.sender ? event.sender : "");
+    }
 
     if (strstr(event.message, "Match found!")) {
       match_state = MatchState::Staging;
