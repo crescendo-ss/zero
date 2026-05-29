@@ -36,6 +36,20 @@ struct FindNearestEnemyNode : behavior::BehaviorNode {
     auto self = ctx.bot->game->player_manager.GetSelf();
     if (!self || self->ship >= 8) return behavior::ExecuteResult::Failure;
 
+    // Match-aware targeting: when MatchTeamCount is configured (>0), restrict candidates to the
+    // bot's own match. ClashEngine's MatchFreqAllocator gives each concurrent match a freq band
+    // [base, base + teamCount*100) where base = 100 + k*(teamCount*100); a participant on freq F is
+    // therefore in the band that F falls into. Cross-match players (different band) are skipped so
+    // the bot doesn't waste fire on opponents it can't damage. MatchTeamCount=0 → no filter (old
+    // behavior; correct for a single match in the arena).
+    int team_count = ctx.blackboard.ValueOr<int>("match_team_count", 0);
+    int band_lo = -1, band_hi = -1;
+    if (team_count > 0) {
+      int band = team_count * 100;
+      band_lo = ((self->frequency - 100) / band) * band + 100;
+      band_hi = band_lo + band;
+    }
+
     Player* nearest = nullptr;
     float nearest_dist_sq = FLT_MAX;
 
@@ -45,6 +59,7 @@ struct FindNearestEnemyNode : behavior::BehaviorNode {
       if (p.ship >= 8) continue;
       if (p.frequency == self->frequency) continue;
       if (p.id == self->id) continue;
+      if (band_lo >= 0 && (p.frequency < band_lo || p.frequency >= band_hi)) continue;  // other match
 
       float dist_sq = self->position.DistanceSq(p.position);
       if (dist_sq < nearest_dist_sq) {
@@ -155,6 +170,7 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
   MatchState match_state = MatchState::Idle;
   bool fight_enabled = true;
   bool afk_suppressed = false;
+  int match_team_count = 0;  // [Regression] MatchTeamCount; 0 = no match-aware targeting filter
 
   ControlClient control;
   bool hello_sent = false;
@@ -172,10 +188,14 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     repo.Add("regression", std::make_unique<RegressionBehavior>());
     SetBehavior("regression");
 
+    auto mtc = bot->config->GetInt("Regression", "MatchTeamCount");
+    match_team_count = mtc ? *mtc : 0;
+
     auto& bb = bot->execute_ctx.blackboard;
     bb.Set("clash_state", (int)match_state);
     bb.Set("fight_enabled", fight_enabled ? 1 : 0);
     bb.Set("afk_suppressed", afk_suppressed ? 1 : 0);
+    bb.Set("match_team_count", match_team_count);
 
     ConnectControl(arena_name);
   }
@@ -234,6 +254,11 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
     } else if (action == "cancel") {
       Event::Dispatch(ChatQueueEvent::Public("?cancel"));
+    } else if (action == "return") {
+      // Rejoin the match we specced out of. Reset the requested ship first so the autonomous
+      // ship-request sequence doesn't immediately re-spec us after the engine places us back.
+      bot->execute_ctx.blackboard.Set("request_ship", 0);
+      Event::Dispatch(ChatQueueEvent::Public("?return"));
     } else if (action == "accept") {
       Event::Dispatch(ChatQueueEvent::Public("?accept"));
     } else if (action == "decline") {
@@ -272,6 +297,7 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     bb.Set("clash_state", (int)match_state);
     bb.Set("fight_enabled", fight_enabled ? 1 : 0);
     bb.Set("afk_suppressed", afk_suppressed ? 1 : 0);
+    bb.Set("match_team_count", match_team_count);
   }
 
   void HandleEvent(const ChatEvent& event) override {
@@ -298,6 +324,24 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     } else if (strstr(event.message, "Match over!")) {
       match_state = MatchState::Idle;
       Emit("match-over", "");
+    } else if (strstr(event.message, "All set")) {
+      // Staging cleared -> countdown begins. Past this point leaving is an abandon, not a
+      // penalty-free cancel ("All set!" / "All set! Pick your final ship -- Ns until lock...").
+      Emit("all-set", "");
+    } else if (const char* r = strstr(event.message, " returned to the match")) {
+      // "<name> returned to the match. [Items ...] [Lives: N]" -- detail carries the returner.
+      Emit("returned", std::string(event.message, r - event.message));
+    } else if (strstr(event.message, "Locked you to your current ship")) {
+      Emit("ship-locked", "");
+    } else if (strstr(event.message, "for the rest of the life")) {
+      // Denied ship change: "You're locked to your current ship for the rest of the life."
+      Emit("ship-denied", "");
+    } else if (strstr(event.message, "to change ships before being locked")) {
+      // Post-death grace window opened: "You have Ns to change ships before being locked...".
+      Emit("ship-window", "");
+    } else if (strstr(event.message, "You abandoned a match")) {
+      // DM to the player the engine just assessed an abandonment penalty against.
+      Emit("abandoned", "");
     }
 
     bot->execute_ctx.blackboard.Set("clash_state", (int)match_state);
