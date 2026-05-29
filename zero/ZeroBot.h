@@ -30,6 +30,7 @@ enum class Zone {
   Nexus,
   HockeyZone,
   Clash,
+  Regression,
 
   Unknown,
   Count
@@ -37,7 +38,8 @@ enum class Zone {
 
 inline const char* to_string(Zone zone) {
   const char* kZoneNames[] = {"Local",        "Subgame",    "Hyperspace", "Devastation", "MetalGear",
-                              "ExtremeGames", "TrenchWars", "Nexus",      "HockeyZone",  "Clash",      "Unknown"};
+                              "ExtremeGames", "TrenchWars", "Nexus",      "HockeyZone",  "Clash",
+                              "Regression",   "Unknown"};
 
   static_assert(ZERO_ARRAY_SIZE(kZoneNames) == (size_t)Zone::Count);
 

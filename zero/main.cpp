@@ -68,6 +68,7 @@ ServerInfo kServers[] = {
     {"Nexus", "127.0.0.1", 5000, Zone::Nexus},
     {"HockeyZone", "127.0.0.1", 5000, Zone::HockeyZone},
     {"Clash", "127.0.0.1", 5000, Zone::Clash},
+    {"Regression", "127.0.0.1", 5000, Zone::Regression},
 };
 
 static_assert(ZERO_ARRAY_SIZE(kServers) == (size_t)Zone::Count - 1);
@@ -111,6 +112,8 @@ const std::unordered_map<std::string_view, ServerInfo*> kServerMap = {
     {"hz", &kServers[8]},
 
     {"clash", &kServers[9]},
+
+    {"regression", &kServers[10]},
 };
 
 const char* kLoginName = "ZeroBot";
@@ -235,6 +238,17 @@ int main(int argc, char* argv[]) {
         zero::Log(zero::LogLevel::Error, "Login::Server value was not a valid server name.");
         return 1;
       }
+    }
+
+    // Optional per-config host/port override of the resolved server. ClashRig sets these so each
+    // regression scenario's bots connect to that scenario's dynamically-allocated SubspaceServer.
+    auto host_override = cfg->GetString("Login", "Host");
+    if (host_override) {
+      server->ipaddr = *host_override;
+    }
+    auto port_override = cfg->GetInt("Login", "Port");
+    if (port_override) {
+      server->port = (zero::u16)*port_override;
     }
 
     auto encryption = cfg->GetString("Login", "Encryption");
