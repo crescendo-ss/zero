@@ -271,6 +271,23 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
     } else if (action == "say") {
       Event::Dispatch(ChatQueueEvent::Public(arg.data()));
+    } else if (action == "attach") {
+      // Become a turret on the named teammate so the pair shares a position; a single lethal hit
+      // then takes out both at the same tick (used to drive a same-team simultaneous KO).
+      auto& pm = bot->game->player_manager;
+      for (size_t i = 0; i < pm.player_count; ++i) {
+        if (strcmp(arg.c_str(), pm.players[i].name) == 0) {
+          pm.AttachSelf(&pm.players[i]);
+          break;
+        }
+      }
+    } else if (action == "reportenergy") {
+      // Report whether we're at (near) full energy, so the orchestrator can gate actions that the
+      // game only permits at full energy (spec/ship-change) or sync a staged engagement.
+      auto self = bot->game->player_manager.GetSelf();
+      float max_energy = (float)bot->game->ship_controller.ship.energy;
+      bool full = self && max_energy > 0.0f && (self->energy / max_energy) >= 0.99f;
+      Emit("energy", full ? "full" : "low");
     } else if (action == "requestship") {
       int ship = arg.empty() ? 1 : atoi(arg.data());
       if (ship >= 1 && ship <= 8) bot->execute_ctx.blackboard.Set("request_ship", ship - 1);
