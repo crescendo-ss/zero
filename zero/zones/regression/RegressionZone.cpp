@@ -325,6 +325,12 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       Emit("invite", event.sender ? event.sender : "");
     }
 
+    // Courtesy notice that a teammate was assessed an abandon and this player may now leave penalty-
+    // free. (ClashEngine doesn't emit this yet -- the matching test is a failing spec.)
+    if (strstr(event.message, "free to leave")) {
+      Emit("free-to-leave", "");
+    }
+
     if (strstr(event.message, "Match found!")) {
       match_state = MatchState::Staging;
       bot->execute_ctx.blackboard.Erase("clash_afk_cleared");
