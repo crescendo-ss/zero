@@ -290,6 +290,11 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     } else if (action == "party") {
       std::string cmd = arg.empty() ? "?party" : ("?party " + arg);
       Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
+    } else if (action == "autoqueue") {
+      // Persistent auto-requeue toggle: "?autoqueue on|off" sets it; a bare "?autoqueue" queries the
+      // current (persisted) state so a reconnected player can confirm the setting survived.
+      std::string cmd = arg.empty() ? "?autoqueue" : ("?autoqueue " + arg);
+      Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
     } else if (action == "say") {
       Event::Dispatch(ChatQueueEvent::Public(arg.data()));
     } else if (action == "attach") {
@@ -354,6 +359,26 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     // free. (ClashEngine doesn't emit this yet -- the matching test is a failing spec.)
     if (strstr(event.message, "free to leave")) {
       Emit("free-to-leave", "");
+    }
+
+    // ?autoqueue (persistent auto-requeue) toggle/state + the post-match auto-requeue notice. The
+    // anticipated ClashEngine wording is wired here ahead of the engine (mirrors free-to-leave); the
+    // matching AutoQueueTests are pending until the engine emits these strings. The markers use the
+    // hyphenated "Auto-queue"/"Auto-queued for" so they don't collide with the win-streak promotion
+    // messages ("Autoqueued ... front of the line" / "re-queued at the back"). "Auto-queued for" is
+    // checked first because it contains the substring "Auto-queue".
+    if (strstr(event.message, "Auto-queued for")) {
+      // Auto re-queued after a completed match -- detail carries the full notice (e.g. "... at the
+      // back of the line") so a scenario can assert *where* in the queue the player landed.
+      Emit("requeued", event.message);
+    } else if (strstr(event.message, "Auto-queue")) {
+      if (strstr(event.message, "AFK")) {
+        Emit("autoqueue-disabled-afk", "");
+      } else if (strstr(event.message, "is now ON")) {
+        Emit("autoqueue-on", "");
+      } else if (strstr(event.message, "is now OFF")) {
+        Emit("autoqueue-off", "");
+      }
     }
 
     if (strstr(event.message, "Match found!")) {
