@@ -36,6 +36,26 @@ struct FindNearestEnemyNode : behavior::BehaviorNode {
     auto self = ctx.bot->game->player_manager.GetSelf();
     if (!self || self->ship >= 8) return behavior::ExecuteResult::Failure;
 
+    auto& pm = ctx.bot->game->player_manager;
+
+    // Forced focus-fire: when "forced_target" names a player, shoot only that player and nobody
+    // else (used to deterministically eliminate one specific player mid-match while their teammate
+    // survives). Strict -- if the named player isn't currently in a ship (e.g. between lives, or
+    // knocked out), target nobody this tick so the shooters never spill damage onto anyone else.
+    std::string forced = ctx.blackboard.ValueOr<std::string>("forced_target", std::string());
+    if (!forced.empty()) {
+      for (size_t i = 0; i < pm.player_count; ++i) {
+        Player& p = pm.players[i];
+        if (p.ship >= 8) continue;
+        if (p.id == self->id) continue;
+        if (strcmp(forced.c_str(), p.name) == 0) {
+          ctx.blackboard.Set(output_key, &p);
+          return behavior::ExecuteResult::Success;
+        }
+      }
+      return behavior::ExecuteResult::Failure;
+    }
+
     // Match-aware targeting: when MatchTeamCount is configured (>0), restrict candidates to the
     // bot's own match. ClashEngine's MatchFreqAllocator gives each concurrent match a freq band
     // [base, base + teamCount*100) where base = 100 + k*(teamCount*100); a participant on freq F is
@@ -53,7 +73,6 @@ struct FindNearestEnemyNode : behavior::BehaviorNode {
     Player* nearest = nullptr;
     float nearest_dist_sq = FLT_MAX;
 
-    auto& pm = ctx.bot->game->player_manager;
     for (size_t i = 0; i < pm.player_count; ++i) {
       Player& p = pm.players[i];
       if (p.ship >= 8) continue;
@@ -171,6 +190,7 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
   bool fight_enabled = true;
   bool afk_suppressed = false;
   int match_team_count = 0;  // [Regression] MatchTeamCount; 0 = no match-aware targeting filter
+  std::string forced_target;  // when non-empty, combat focus-fires only this named player
 
   ControlClient control;
   bool hello_sent = false;
@@ -196,6 +216,7 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     bb.Set("fight_enabled", fight_enabled ? 1 : 0);
     bb.Set("afk_suppressed", afk_suppressed ? 1 : 0);
     bb.Set("match_team_count", match_team_count);
+    bb.Set("forced_target", forced_target);
 
     ConnectControl(arena_name);
   }
@@ -296,6 +317,9 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       bot->execute_ctx.blackboard.Set("request_ship", 8);
     } else if (action == "fight") {
       fight_enabled = (arg == "on");
+    } else if (action == "target") {
+      // Focus-fire a specific named player; empty arg clears the override (back to nearest-enemy).
+      forced_target = arg;
     } else if (action == "idle") {
       afk_suppressed = (arg == "on");
     } else if (action == "disconnect") {
@@ -315,6 +339,7 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
     bb.Set("fight_enabled", fight_enabled ? 1 : 0);
     bb.Set("afk_suppressed", afk_suppressed ? 1 : 0);
     bb.Set("match_team_count", match_team_count);
+    bb.Set("forced_target", forced_target);
   }
 
   void HandleEvent(const ChatEvent& event) override {
@@ -343,7 +368,9 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       Emit("go", "");
     } else if (strstr(event.message, "Match cancelled")) {
       match_state = MatchState::Idle;
-      Emit("match-cancelled", "");
+      // Carry the cancellation text as the detail so scenarios can assert *why* the match was
+      // cancelled (e.g. that a staging spec is messaged distinctly from an AFK "did not ready").
+      Emit("match-cancelled", event.message);
     } else if (strstr(event.message, "Match over!")) {
       match_state = MatchState::Idle;
       Emit("match-over", "");
