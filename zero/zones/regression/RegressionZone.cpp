@@ -314,6 +314,18 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       float max_energy = (float)bot->game->ship_controller.ship.energy;
       bool full = self && max_energy > 0.0f && (self->energy / max_energy) >= 0.99f;
       Emit("energy", full ? "full" : "low");
+    } else if (action == "reportposition") {
+      // Report our current map position in PIXELS (ClashEngine's coordinate convention), so the
+      // orchestrator can verify spawn/respawn placement. position is in tiles as a float; *16 ->
+      // pixels. "spec" when we're not in a ship (no meaningful position to report).
+      auto self = bot->game->player_manager.GetSelf();
+      if (self && self->ship < 8) {
+        std::string pos = std::to_string((int)(self->position.x * 16.0f)) + "," +
+                          std::to_string((int)(self->position.y * 16.0f));
+        Emit("position", pos);
+      } else {
+        Emit("position", "spec");
+      }
     } else if (action == "requestship") {
       int ship = arg.empty() ? 1 : atoi(arg.data());
       if (ship >= 1 && ship <= 8) bot->execute_ctx.blackboard.Set("request_ship", ship - 1);
