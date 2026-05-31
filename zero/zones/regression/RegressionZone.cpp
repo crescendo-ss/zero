@@ -381,7 +381,9 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       }
     }
 
-    if (strstr(event.message, "Match found!")) {
+    // Match-found notice ("You have Ns to move or fire to confirm you're here. ..."). Keyed on the
+    // stable "confirm you're here" clause; the "you're ready" / "All set" markers below are disjoint.
+    if (strstr(event.message, "confirm you're here")) {
       match_state = MatchState::Staging;
       bot->execute_ctx.blackboard.Erase("clash_afk_cleared");
       Emit("match-found", "");
