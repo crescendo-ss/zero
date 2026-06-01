@@ -26,6 +26,10 @@ namespace clash {
 
 enum class MatchState { Idle, Staging, Live };
 
+static bool StartsWith(const char* str, const char* prefix) {
+  return strncmp(str, prefix, strlen(prefix)) == 0;
+}
+
 // Finds the nearest enemy (different frequency, in a ship) and stores Player* in output_key.
 struct FindNearestEnemyNode : behavior::BehaviorNode {
   FindNearestEnemyNode(const char* output_key) : output_key(output_key) {}
@@ -185,20 +189,35 @@ struct ClashZoneController : ZoneController, EventHandler<ChatEvent> {
     }
   }
 
+  // The state machine is driven by ClashEngine's server chat. These matches deliberately key on the
+  // shortest *stable* fragment of each message rather than the full line, so wording tweaks on the
+  // server side don't silently break the flow. Reference strings (ClashEngine, as of this writing):
+  //   Staging start  : "You have N seconds to move or fire to confirm you're here. ..."  (DM to each
+  //                     participant, MatchOrchestrator.BeginSetup). Older builds: "Match found! ...".
+  //   AFK cleared    : "Got it -- you're ready. Standby for the countdown."  (DM on first movement)
+  //   Live           : "GO!"  (arena broadcast w/ Ding on the final countdown tick)
+  //   Match ended    : "Match over! ...", "Match cancelled. ...", "Match abandoned."
   void HandleEvent(const ChatEvent& event) override {
     if (!in_zone || !event.message) return;
 
-    if (strstr(event.message, "Match found!")) {
-      Log(LogLevel::Info, "Clash: match found, entering staging.");
-      match_state = MatchState::Staging;
-      bot->execute_ctx.blackboard.Erase("clash_afk_cleared");
-    } else if (strstr(event.message, "you're ready")) {
+    const char* msg = event.message;
+
+    if (strstr(msg, "move or fire") || strstr(msg, "Match found")) {
+      // "move or fire" is the call-to-action verb phrase, unique to the staging notice.
+      if (match_state != MatchState::Staging) {
+        Log(LogLevel::Info, "Clash: staging started, moving to clear AFK check.");
+        match_state = MatchState::Staging;
+        bot->execute_ctx.blackboard.Erase("clash_afk_cleared");
+      }
+    } else if (strstr(msg, "you're ready")) {
       Log(LogLevel::Info, "Clash: AFK check cleared.");
       bot->execute_ctx.blackboard.Set("clash_afk_cleared", true);
-    } else if (strcmp(event.message, "GO!") == 0) {
+    } else if (StartsWith(msg, "GO!")) {
+      // Anchored to the start so the "...ships are locked 5s before GO." / "...then GO." lines (note
+      // the period, not "!") don't trip the live transition early.
       Log(LogLevel::Info, "Clash: match live.");
       match_state = MatchState::Live;
-    } else if (strstr(event.message, "Match cancelled") || strstr(event.message, "Match over!")) {
+    } else if (strstr(msg, "Match over") || strstr(msg, "Match cancelled") || strstr(msg, "Match abandoned")) {
       Log(LogLevel::Info, "Clash: match ended, will re-queue.");
       match_state = MatchState::Idle;
       requeue_pending = true;
