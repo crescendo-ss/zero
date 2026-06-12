@@ -3,6 +3,7 @@
 #include <cfloat>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <zero/BotController.h>
 #include <zero/ChatQueue.h>
@@ -191,6 +192,7 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
   bool afk_suppressed = false;
   int match_team_count = 0;  // [Regression] MatchTeamCount; 0 = no match-aware targeting filter
   std::string forced_target;  // when non-empty, combat focus-fires only this named player
+  std::vector<std::string> chat_watches;  // `watch` substrings; a matching chat line emits EVT "chat"
 
   ControlClient control;
   bool hello_sent = false;
@@ -297,6 +299,17 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       // "is now ON/OFF" state. The control verb stays "autoqueue" so rig scenarios don't churn.
       std::string cmd = arg.empty() ? "?auto" : ("?auto " + arg);
       Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
+    } else if (action == "forfeit") {
+      Event::Dispatch(ChatQueueEvent::Public("?forfeit"));
+    } else if (action == "watch") {
+      // Register a chat substring to report back (EVT "chat" with the full matching line) -- the
+      // generic command-output channel for replies that have no dedicated lifecycle marker
+      // (?penalties, ?showline, the ?return lives notice, ...). Empty arg clears all watches.
+      if (arg.empty()) {
+        chat_watches.clear();
+      } else {
+        chat_watches.push_back(arg);
+      }
     } else if (action == "say") {
       Event::Dispatch(ChatQueueEvent::Public(arg.data()));
     } else if (action == "attach") {
@@ -364,22 +377,61 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
   void HandleEvent(const ChatEvent& event) override {
     if (!in_zone || !event.message) return;
 
+    // Registered chat watches first (independent of every fixed marker): report the full line for
+    // the first watch that matches, at most one "chat" EVT per line.
+    for (const std::string& w : chat_watches) {
+      if (strstr(event.message, w.c_str())) {
+        Emit("chat", event.message);
+        break;
+      }
+    }
+
     // Party invite (independent of match lifecycle): "<inviter> invited you to a party. ..."
     if (strstr(event.message, "invited you to a party")) {
       Emit("invite", event.sender ? event.sender : "");
     }
 
-    // Courtesy notice that a teammate was assessed an abandon and this player may now leave penalty-
-    // free. (ClashEngine doesn't emit this yet -- the matching test is a failing spec.)
+    // Courtesy notice that a teammate was assessed an abandon and this player may now leave
+    // penalty-free ("Your teammate <name> abandoned the match -- you are free to leave without
+    // penalty.", ClashEngine 2026-06).
     if (strstr(event.message, "free to leave")) {
       Emit("free-to-leave", "");
     }
 
+    // ?forfeit vote progress -- covers the voter's own confirmation ("You asked/agreed to
+    // forfeit...") and the teammate broadcast ("<name> has asked/agreed to forfeit...").
+    if (strstr(event.message, "asked to forfeit") || strstr(event.message, "agreed to forfeit")) {
+      Emit("forfeit-vote", event.message);
+    }
+
+    // Restored to an *other* queue after a match ("You're back in line for <queue> -- you were
+    // queued there when your match formed. ...").
+    if (strstr(event.message, "You're back in line for")) {
+      Emit("queue-restored", event.message);
+    }
+
+    // Presence-zone broadcasts. "is back in the zone" is distinct from the team-collapse recovery
+    // notice ("... is back. Match continues.").
+    if (strstr(event.message, "has left the zone")) {
+      Emit("zone-vacated", event.message);
+    }
+    if (strstr(event.message, "is back in the zone")) {
+      Emit("zone-reclaimed", event.message);
+    }
+
+    // Queue-dwell wake-up DM ("You've been in <queue> for a while -- still around? ...").
+    if (strstr(event.message, "still around?")) {
+      Emit("afk-warned", "");
+    }
+
+    // The queue listing header ("Queues (N):") -- sent by the arena-entry greeter and by ?queue.
+    if (strstr(event.message, "Queues (")) {
+      Emit("queue-table", event.message);
+    }
+
     // ?auto (persistent auto-requeue, formerly ?autoqueue) toggle/state + the post-match
-    // auto-requeue notice. The
-    // anticipated ClashEngine wording is wired here ahead of the engine (mirrors free-to-leave); the
-    // matching AutoQueueTests are pending until the engine emits these strings. The markers use the
-    // hyphenated "Auto-queue"/"Auto-queued for" so they don't collide with the win-streak promotion
+    // auto-requeue notice (all landed in ClashEngine, 2026-06). The markers use the hyphenated
+    // "Auto-queue"/"Auto-queued for" so they don't collide with the win-streak promotion
     // messages ("Autoqueued ... front of the line" / "re-queued at the back"). "Auto-queued for" is
     // checked first because it contains the substring "Auto-queue".
     if (strstr(event.message, "Auto-queued for")) {
