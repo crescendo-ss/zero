@@ -291,9 +291,11 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       std::string cmd = arg.empty() ? "?party" : ("?party " + arg);
       Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
     } else if (action == "autoqueue") {
-      // Persistent auto-requeue toggle: "?autoqueue on|off" sets it; a bare "?autoqueue" queries the
-      // current (persisted) state so a reconnected player can confirm the setting survived.
-      std::string cmd = arg.empty() ? "?autoqueue" : ("?autoqueue " + arg);
+      // Persistent auto-requeue (?autoqueue was renamed ?auto in ClashEngine, 2026-06-11):
+      // "?auto on|off" sets it; a bare "?auto" TOGGLES the persisted state (it stopped being a
+      // read-only query on 2026-06-10) -- either way the engine replies with the resulting
+      // "is now ON/OFF" state. The control verb stays "autoqueue" so rig scenarios don't churn.
+      std::string cmd = arg.empty() ? "?auto" : ("?auto " + arg);
       Event::Dispatch(ChatQueueEvent::Public(cmd.data()));
     } else if (action == "say") {
       Event::Dispatch(ChatQueueEvent::Public(arg.data()));
@@ -373,7 +375,8 @@ struct RegressionZoneController : ZoneController, EventHandler<ChatEvent> {
       Emit("free-to-leave", "");
     }
 
-    // ?autoqueue (persistent auto-requeue) toggle/state + the post-match auto-requeue notice. The
+    // ?auto (persistent auto-requeue, formerly ?autoqueue) toggle/state + the post-match
+    // auto-requeue notice. The
     // anticipated ClashEngine wording is wired here ahead of the engine (mirrors free-to-leave); the
     // matching AutoQueueTests are pending until the engine emits these strings. The markers use the
     // hyphenated "Auto-queue"/"Auto-queued for" so they don't collide with the win-streak promotion
